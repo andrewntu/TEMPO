@@ -22,9 +22,9 @@ stl_position = 'stl/'
 
 class Dataset_Monash(Dataset):
     def __init__(self, root_path, flag='train', size=None,
-                 features='S', data_path='ETTh1.csv',
-                 target='OT', scale=True, timeenc=0, freq='h', 
-                 percent=100, data_name = 'etth2', max_len=-1, train_all=False):
+                features='S', data_path='ETTh1.csv',
+                target='OT', scale=True, timeenc=0, freq='h', 
+                percent=100, data_name = 'etth2', max_len=-1, train_all=False):
         # size [seq_len, label_len, pred_len]
         # info
         if size == None:
@@ -663,9 +663,8 @@ class Dataset_Custom(Dataset):
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
-    
 
-class Dataset_Pred(Dataset):
+class Dataset_Pred_SAC(Dataset):
     def __init__(self, root_path, flag='pred', size=None,
                 features='S', data_path='ETTh1.csv',
                 target='OT', scale=True, inverse=False, timeenc=0, freq='15min', cols=None,
@@ -681,7 +680,7 @@ class Dataset_Pred(Dataset):
             self.label_len = size[1]
             self.pred_len = size[2]
         # init
-        assert flag in ['pred']
+        assert flag in ['pred_t']
 
         self.features = features
         self.target = target
@@ -759,47 +758,43 @@ class Dataset_Pred(Dataset):
 
     def __read_data__(self):
         self.scaler = StandardScaler()
-        df_raw = pd.read_csv(os.path.join(self.root_path,
-                                        self.data_path))
-        # print(self.cols, self.target, df_raw['date'])
-        '''
-        df_raw.columns: ['date', ...(other features), target feature]
-        '''
-        if self.cols:
-            cols = self.cols.copy()
-            cols.remove(self.target)
-        else:
-            cols = list(df_raw.columns)
-            cols.remove(self.target)
-            cols.remove('date')
-        df_raw = df_raw[['date'] + cols + [self.target]] # => put the target to the bottom of the array -> for prediction usage?
+        st = read(os.path.join(self.root_path,self.data_path))
+        tr = st[0]
+        times = tr.times("timestamp")
+        data = tr.data.reshape(-1, 1)
+        # print(data.shape)
+        df_raw = pd.DataFrame({'date': pd.to_datetime(times, unit='s')})
+        df_raw['data'] = data
+        # print(df_raw['data'].shape, type(df_raw['data']))
+        
         border1 = 0 #len(df_raw) - self.seq_len
         border2 = int(0.1*len(df_raw)) - self.seq_len + 1 # -> find the edge index to cut the data 
-        # print(border1, border2, self.seq_len, self.features,len(df_raw))
+        # print(border1, border2)
         if self.features == 'M' or self.features == 'MS':
             cols_data = df_raw.columns[1:]
             df_data = df_raw[cols_data]
         elif self.features == 'S':
-            df_data = df_raw[[self.target]]
-        # print(df_raw['date'][0], type(df_raw['date'][0]))
-        # print(df_data.shape, type(df_data))
+            df_data = df_raw['data']
+        df_data = pd.DataFrame(df_data.values.reshape(-1, 1), columns=['data'])
+        # print(df_data.shape)
         # sys.exit()
         if self.scale:
             self.scaler.fit(df_data.values)
             data = self.scaler.transform(df_data.values)
         else:
             data = df_data.values
-
+        
         tmp_stamp = df_raw[['date']][border1:border2]
+        # print(tmp_stamp, border1, border2)
         tmp_stamp['date'] = pd.to_datetime(tmp_stamp.date)
         pred_dates = pd.date_range(tmp_stamp.date.values[-1], periods=self.pred_len + 1, freq=self.freq)
-        print(self.pred_len + 1, self.freq, pred_dates, tmp_stamp)
+        # print(self.pred_len + 1, self.freq, pred_dates, tmp_stamp)
         col_date = df_raw.columns[:1]
         df_time = df_raw[col_date]
-        # print(df_time)
+        print(self.period)
         data_raw = pd.DataFrame.join(df_time, pd.DataFrame(data))#[border1:border2]
         trend_stamp, seasonal_stamp, resid_stamp = self.stl_resolve(data_raw=data_raw, period = self.period) # -> read-in decomposed data
-        
+        sys.exit()
         df_stamp = pd.DataFrame(columns=['date'])
         df_stamp.date = list(tmp_stamp.date.values) + list(pred_dates[1:])
         if self.timeenc == 0:
@@ -833,6 +828,7 @@ class Dataset_Pred(Dataset):
         r_begin = s_end - self.label_len
         r_end = r_begin + self.label_len + self.pred_len
         print(s_begin, s_end, r_begin, r_end)
+        # print("we did do here!!!!")
 
         seq_x = self.data_x[s_begin:s_end]
         if self.inverse:
